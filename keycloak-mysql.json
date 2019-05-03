@@ -1,0 +1,504 @@
+{
+    "kind": "Template",
+    "apiVersion": "v1",
+    "metadata": {
+        "name": "keycloak-mysql",
+        "annotations": {
+            "iconClass": "icon-sso",
+            "tags": "keycloak",
+            "version": "1.0",
+            "openshift.io/display-name": "Keycloak Mysql",
+            "description": "Keycloak server with mysql"
+        }
+    },
+    "parameters": [
+		{
+            "description": "Maximum amount of memory the containers can use.",
+            "displayName": "Memory Limit",
+            "name": "MEMORY_LIMIT",
+            "required": true,
+            "value": "512Mi"
+        },
+        {
+            "displayName": "Application Name",
+            "description": "The name for the application.",
+            "name": "APPLICATION_NAME",
+            "value": "keycloak",
+            "required": true
+        },
+        {
+            "displayName": "Keycloak Administrator Username",
+            "description": "Keycloak Server administrator username",
+            "name": "KEYCLOAK_USER",
+            "from": "[a-zA-Z0-9]{8}",
+            "generate": "expression",
+            "required": true
+        },
+        {
+            "displayName": "Keycloak Administrator Password",
+            "description": "Keycloak Server administrator password",
+            "name": "KEYCLOAK_PASSWORD",
+            "from": "[a-zA-Z0-9]{8}",
+            "generate": "expression",
+            "required": true
+        },
+        {
+            "description": "The name of the OpenShift Service exposed for the database.",
+            "displayName": "Database Service Name",
+            "name": "DATABASE_SERVICE_NAME",
+            "required": true,
+            "value": "mysql-keycloak"
+        },
+        {
+            "description": "Username for MySQL user that will be used for accessing the database.",
+            "displayName": "MySQL Connection Username",
+            "from": "user[A-Z0-9]{3}",
+            "generate": "expression",
+            "name": "MYSQL_USER",
+            "required": true
+        },
+        {
+            "description": "Password for the MySQL connection user.",
+            "displayName": "MySQL Connection Password",
+            "from": "[a-zA-Z0-9]{16}",
+            "generate": "expression",
+            "name": "MYSQL_PASSWORD",
+            "required": true
+        },
+        {
+            "description": "Password for the MySQL root user.",
+            "displayName": "MySQL root user Password",
+            "from": "[a-zA-Z0-9]{16}",
+            "generate": "expression",
+            "name": "MYSQL_ROOT_PASSWORD",
+            "required": true
+        },
+        {
+            "description": "Name of the MySQL database accessed.",
+            "displayName": "MySQL Database Name",
+            "name": "MYSQL_DATABASE",
+            "required": true,
+            "value": "keycloak"
+        },
+        {
+            "description": "Volume space available for data, e.g. 512Mi, 2Gi.",
+            "displayName": "Volume Capacity",
+            "name": "VOLUME_CAPACITY",
+            "required": true,
+            "value": "1Gi"
+        },
+        {
+            "description": "Version of MySQL image to be used (5.7, or latest).",
+            "displayName": "Version of MySQL Image",
+            "name": "MYSQL_VERSION",
+            "required": true,
+            "value": "5.7"
+        },
+        {
+            "displayName": "Custom http Route Hostname",
+            "description": "Custom hostname for http service route. Leave blank for default hostname, e.g.: <application-name>.<project>.<default-domain-suffix>",
+            "name": "HOSTNAME_HTTP",
+            "value": "",
+            "required": false
+        },
+        {
+            "displayName": "Custom https Route Hostname",
+            "description": "Custom hostname for https service route. Leave blank for default hostname, e.g.: <application-name>.<project>.<default-domain-suffix>",
+            "name": "HOSTNAME_HTTPS",
+            "value": "",
+            "required": false
+        },
+        {
+            "displayName": "Namespace used for DNS discovery",
+            "description": "This namespace is a part of DNS query sent to Kubernetes API. This query allows the DNS_PING protocol to extract cluster members. This parameter might be removed once https://issues.jboss.org/browse/JGRP-2292 is implemented.",
+            "name": "NAMESPACE",
+			"value": "openshift",
+            "required": true
+        }
+    ],
+    "objects": [
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "annotations": {
+                    "template.openshift.io/expose-database_name": "{.data['database-name']}",
+                    "template.openshift.io/expose-password": "{.data['database-password']}",
+                    "template.openshift.io/expose-root_password": "{.data['database-root-password']}",
+                    "template.openshift.io/expose-username": "{.data['database-user']}"
+                },
+                "name": "${DATABASE_SERVICE_NAME}"
+            },
+            "stringData": {
+                "database-name": "${MYSQL_DATABASE}",
+                "database-password": "${MYSQL_PASSWORD}",
+                "database-root-password": "${MYSQL_ROOT_PASSWORD}",
+                "database-user": "${MYSQL_USER}"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "annotations": {
+                    "template.openshift.io/expose-uri": "mysql://{.spec.clusterIP}:{.spec.ports[?(.name==\"mysql\")].port}"
+                },
+                "name": "${DATABASE_SERVICE_NAME}"
+            },
+            "spec": {
+                "ports": [
+                    {
+                        "name": "mysql",
+                        "port": 3306
+                    }
+                ],
+                "selector": {
+                    "name": "${DATABASE_SERVICE_NAME}"
+                }
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "PersistentVolumeClaim",
+            "metadata": {
+                "name": "${DATABASE_SERVICE_NAME}"
+            },
+            "spec": {
+                "accessModes": [
+                    "ReadWriteOnce"
+                ],
+                "resources": {
+                    "requests": {
+                        "storage": "${VOLUME_CAPACITY}"
+                    }
+                }
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "DeploymentConfig",
+            "metadata": {
+                "annotations": {
+                    "template.alpha.openshift.io/wait-for-ready": "true"
+                },
+                "name": "${DATABASE_SERVICE_NAME}"
+            },
+            "spec": {
+                "replicas": 1,
+                "selector": {
+                    "name": "${DATABASE_SERVICE_NAME}"
+                },
+                "strategy": {
+                    "type": "Recreate"
+                },
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "name": "${DATABASE_SERVICE_NAME}"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "name": "MYSQL_USER",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-user",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "MYSQL_PASSWORD",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-password",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "MYSQL_ROOT_PASSWORD",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-root-password",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "MYSQL_DATABASE",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-name",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": " ",
+                                "imagePullPolicy": "IfNotPresent",
+                                "livenessProbe": {
+                                    "initialDelaySeconds": 30,
+                                    "tcpSocket": {
+                                        "port": 3306
+                                    },
+                                    "timeoutSeconds": 1
+                                },
+                                "name": "mysql",
+                                "ports": [
+                                    {
+                                        "containerPort": 3306
+                                    }
+                                ],
+                                "readinessProbe": {
+                                    "exec": {
+                                        "command": [
+                                            "/bin/sh",
+                                            "-i",
+                                            "-c",
+                                            "MYSQL_PWD=\"$MYSQL_PASSWORD\" mysql -h 127.0.0.1 -u $MYSQL_USER -D $MYSQL_DATABASE -e 'SELECT 1'"
+                                        ]
+                                    },
+                                    "initialDelaySeconds": 5,
+                                    "timeoutSeconds": 1
+                                },
+                                "resources": {
+                                    "limits": {
+                                        "memory": "${MEMORY_LIMIT}"
+                                    }
+                                },
+                                "volumeMounts": [
+                                    {
+                                        "mountPath": "/var/lib/mysql/data",
+                                        "name": "${DATABASE_SERVICE_NAME}-data"
+                                    }
+                                ]
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "${DATABASE_SERVICE_NAME}-data",
+                                "persistentVolumeClaim": {
+                                    "claimName": "${DATABASE_SERVICE_NAME}"
+                                }
+                            }
+                        ]
+                    }
+                },
+                "triggers": [
+                    {
+                        "imageChangeParams": {
+                            "automatic": true,
+                            "containerNames": [
+                                "mysql"
+                            ],
+                            "from": {
+                                "kind": "ImageStreamTag",
+                                "name": "mysql:${MYSQL_VERSION}",
+                                "namespace": "${NAMESPACE}"
+                            }
+                        },
+                        "type": "ImageChange"
+                    },
+                    {
+                        "type": "ConfigChange"
+                    }
+                ]
+            }
+        },
+        {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "spec": {
+                "ports": [
+                    {
+                        "port": 8080,
+                        "targetPort": 8080
+                    }
+                ],
+                "selector": {
+                    "deploymentConfig": "${APPLICATION_NAME}"
+                }
+            },
+            "metadata": {
+                "name": "${APPLICATION_NAME}",
+                "labels": {
+                    "application": "${APPLICATION_NAME}"
+                },
+                "annotations": {
+                    "description": "The web server's http port."
+                }
+            }
+        },
+        {
+            "kind": "Service",
+            "apiVersion": "v1",
+            "spec": {
+                "ports": [
+                    {
+                        "port": 8443,
+                        "targetPort": 8443
+                    }
+                ],
+                "selector": {
+                    "deploymentConfig": "${APPLICATION_NAME}"
+                }
+            },
+            "metadata": {
+                "name": "secure-${APPLICATION_NAME}",
+                "labels": {
+                    "application": "${APPLICATION_NAME}"
+                },
+                "annotations": {
+                    "description": "The web server's https port."
+                }
+            }
+        },
+        {
+            "kind": "Route",
+            "apiVersion": "v1",
+            "id": "${APPLICATION_NAME}-http",
+            "metadata": {
+                "name": "${APPLICATION_NAME}",
+                "labels": {
+                    "application": "${APPLICATION_NAME}"
+                },
+                "annotations": {
+                    "description": "Route for application's http service."
+                }
+            },
+            "spec": {
+                "host": "${HOSTNAME_HTTP}",
+                "to": {
+                    "name": "${APPLICATION_NAME}"
+                }
+            }
+        },
+        {
+            "kind": "Route",
+            "apiVersion": "v1",
+            "id": "${APPLICATION_NAME}-https",
+            "metadata": {
+                "name": "secure-${APPLICATION_NAME}",
+                "labels": {
+                    "application": "${APPLICATION_NAME}"
+                },
+                "annotations": {
+                    "description": "Route for application's https service."
+                }
+            },
+            "spec": {
+                "host": "${HOSTNAME_HTTPS}",
+                "to": {
+                    "name": "secure-${APPLICATION_NAME}"
+                },
+                "tls": {
+                    "termination": "passthrough"
+                }
+            }
+        },
+        {
+            "kind": "DeploymentConfig",
+            "apiVersion": "v1",
+            "metadata": {
+                "name": "${APPLICATION_NAME}",
+                "labels": {
+                    "application": "${APPLICATION_NAME}"
+                }
+            },
+            "spec": {
+                "strategy": {
+                    "type": "Recreate"
+                },
+                "triggers": [
+                    {
+                        "type": "ConfigChange"
+                    }
+                ],
+                "replicas": 1,
+                "selector": {
+                    "deploymentConfig": "${APPLICATION_NAME}"
+                },
+                "template": {
+                    "metadata": {
+                        "name": "${APPLICATION_NAME}",
+                        "labels": {
+                            "deploymentConfig": "${APPLICATION_NAME}",
+                            "application": "${APPLICATION_NAME}"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "${APPLICATION_NAME}",
+                                "image": "jboss/keycloak-openshift",
+                                "ports": [
+                                    {
+                                        "containerPort": 8080,
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "name": "https",
+                                        "containerPort": 8443,
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "env": [
+                                    {
+                                        "name": "KEYCLOAK_USER",
+                                        "value": "${KEYCLOAK_USER}"
+                                    },
+                                    {
+                                        "name": "KEYCLOAK_PASSWORD",
+                                        "value": "${KEYCLOAK_PASSWORD}"
+                                    },
+                                    {
+                                        "name": "DB_VENDOR",
+                                        "value": "mysql"
+                                    },
+									{
+										"name": "DB_ADDR",
+                                        "value": "${DATABASE_SERVICE_NAME}"									
+									},
+									{
+                                        "name": "DB_DATABASE",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-name",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    },
+									{
+                                        "name": "DB_USER",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-user",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "DB_PASSWORD",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "database-password",
+                                                "name": "${DATABASE_SERVICE_NAME}"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "securityContext": {
+                                    "privileged": false
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    ]
+}
